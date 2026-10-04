@@ -44,6 +44,7 @@ export type Driver = {
 export type PickupRequest = {
   id: string;
   customerId: string;
+  customerName?: string;
   wasteType: WasteType;
   serviceType: ServiceType;
   status: PickupStatus;
@@ -51,6 +52,7 @@ export type PickupRequest = {
   scheduledFor: string;
   notes?: string;
   assignedDriverId?: string;
+  completedAt?: string;
 };
 
 export type RouteStop = {

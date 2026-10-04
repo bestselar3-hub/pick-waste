@@ -1,10 +1,41 @@
-const pickups = [
-  { id: 'PW-1042', address: '15 Ikoyi Road, Lagos', status: 'Assigned' },
-  { id: 'PW-1043', address: 'Bode Thomas, Surulere', status: 'En Route' },
-  { id: 'PW-1047', address: 'Lekki Phase I', status: 'Completed' }
-];
+import { useEffect, useState } from 'react';
+
+type DriverPickup = {
+  id: string;
+  customerName?: string;
+  wasteType: string;
+  pickupLocation: { lat: number; lng: number };
+  status: string;
+  scheduledFor: string;
+  assignedDriverId?: string;
+};
 
 export default function App() {
+  const [pickups, setPickups] = useState<DriverPickup[]>([]);
+  const [updatingId, setUpdatingId] = useState('');
+
+  const loadPickups = async () => {
+    const res = await fetch('http://localhost:4000/api/pickups');
+    const json = await res.json();
+    setPickups(json.data ?? []);
+  };
+
+  useEffect(() => {
+    loadPickups();
+  }, []);
+
+  const updateStatus = async (pickupId: string, nextStatus: string) => {
+    setUpdatingId(pickupId);
+    await fetch(`http://localhost:4000/api/pickups/${pickupId}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: nextStatus })
+    });
+
+    await loadPickups();
+    setUpdatingId('');
+  };
+
   return (
     <main className="driver-shell">
       <header className="driver-header">
@@ -17,7 +48,7 @@ export default function App() {
 
       <section className="route-card">
         <h2>Today’s route</h2>
-        <p>5 stops • Estimated completion: 2h 15m</p>
+        <p>{pickups.filter((item) => item.status !== 'completed').length} active pickups • 2.4 km to next stop</p>
       </section>
 
       <section className="pickup-list">
@@ -25,9 +56,17 @@ export default function App() {
           <article key={pickup.id} className="pickup-item">
             <div>
               <strong>{pickup.id}</strong>
-              <p>{pickup.address}</p>
+              <p>{pickup.customerName || 'Customer'} • {pickup.wasteType}</p>
+              <p>{new Date(pickup.scheduledFor).toLocaleString()}</p>
             </div>
-            <span className="status-pill">{pickup.status}</span>
+
+            <div style={{ display: 'grid', gap: 8, justifyItems: 'end' }}>
+              <span className="status-pill">{pickup.status}</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="action-btn" onClick={() => updateStatus(pickup.id, 'in_progress')} disabled={updatingId === pickup.id}>Start</button>
+                <button className="action-btn success" onClick={() => updateStatus(pickup.id, 'completed')} disabled={updatingId === pickup.id}>Done</button>
+              </div>
+            </div>
           </article>
         ))}
       </section>
