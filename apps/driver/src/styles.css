@@ -1,0 +1,84 @@
+body {
+  margin: 0;
+  font-family: Inter, sans-serif;
+  background: linear-gradient(135deg, #f5f7ff, #edfdf6);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.driver-shell {
+  max-width: 500px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 24px;
+  color: #0f172a;
+}
+
+.driver-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: #64748b;
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 32px;
+}
+
+.toggle-btn {
+  background: #16a34a;
+  border: none;
+  color: white;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-weight: 700;
+}
+
+.route-card,
+.pickup-item {
+  background: rgba(255,255,255,0.9);
+  border-radius: 16px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+}
+
+.route-card {
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.pickup-list {
+  display: grid;
+  gap: 14px;
+}
+
+.pickup-item {
+  padding: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pickup-item p {
+  margin: 6px 0 0;
+  color: #475569;
+}
+
+.status-pill {
+  background: #dbeafe;
+  color: #1d4ed8;
+  padding: 8px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
