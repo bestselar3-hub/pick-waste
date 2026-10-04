@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient, PickupStatus, ServiceType, WasteType } from '@prisma/client';
 import { comparePassword, hashPassword, requireAuth, requireRole, signToken, type AuthenticatedRequest } from './auth';
+import { optimizeRouteStops } from './routeOptimizer';
 
 dotenv.config();
 
@@ -376,26 +377,80 @@ app.post('/api/pickups/:id/assign', async (req, res) => {
   return res.json({ data: serializePickup(updated) });
 });
 
-app.get('/api/routes', async (_req, res) => {
+app.get('/api/routes', async (req, res) => {
+  const driverId = String(req.query.driverId ?? '');
+  const driver = driverId
+    ? await prisma.driver.findUnique({ where: { id: driverId } })
+    : null;
+
   const pickups = await prisma.pickupRequest.findMany({
     where: { status: { notIn: [PickupStatus.completed, PickupStatus.cancelled] } },
     include: { customer: true, assignedDriver: true },
     orderBy: { scheduledFor: 'asc' }
   });
 
+  const startLocation = driver && driver.currentLocationLat != null && driver.currentLocationLng != null
+    ? { lat: driver.currentLocationLat, lng: driver.currentLocationLng }
+    : { lat: 6.5244, lng: 3.3792 };
+
+  const optimized = optimizeRouteStops(
+    pickups.map((pickup) => ({
+      id: pickup.id,
+      customerName: pickup.customer.name,
+      pickupLocationLat: pickup.pickupLocationLat,
+      pickupLocationLng: pickup.pickupLocationLng,
+      status: pickup.status,
+      scheduledFor: pickup.scheduledFor.toISOString()
+    })),
+    startLocation
+  );
+
   res.json({
-    data: [
-      {
-        routeId: 'route-01',
-        driverId: pickups[0]?.assignedDriverId ?? null,
-        stops: pickups.slice(0, 5).map((pickup, index) => ({
-          pickupId: pickup.id,
-          sequence: index + 1,
-          status: pickup.status
-        }))
-      }
-    ]
+    data: {
+      routeId: `route-${driverId || 'default'}`,
+      driverId: driverId || pickups[0]?.assignedDriverId || null,
+      totalDistanceKm: optimized.totalDistanceKm,
+      stops: optimized.stops.map((stop) => ({
+        pickupId: stop.id,
+        customerName: stop.customerName,
+        sequence: stop.sequence,
+        status: stop.status,
+        scheduledFor: stop.scheduledFor,
+        distanceFromPreviousKm: Number(stop.distanceFromPreviousKm.toFixed(2))
+      }))
+    }
   });
+});
+
+app.get('/api/routes/optimized', async (req, res) => {
+  const driverId = String(req.query.driverId ?? '');
+  const driver = driverId
+    ? await prisma.driver.findUnique({ where: { id: driverId } })
+    : null;
+
+  const pickups = await prisma.pickupRequest.findMany({
+    where: { status: { notIn: [PickupStatus.completed, PickupStatus.cancelled] } },
+    include: { customer: true, assignedDriver: true },
+    orderBy: { scheduledFor: 'asc' }
+  });
+
+  const startLocation = driver && driver.currentLocationLat != null && driver.currentLocationLng != null
+    ? { lat: driver.currentLocationLat, lng: driver.currentLocationLng }
+    : { lat: 6.5244, lng: 3.3792 };
+
+  const optimized = optimizeRouteStops(
+    pickups.map((pickup) => ({
+      id: pickup.id,
+      customerName: pickup.customer.name,
+      pickupLocationLat: pickup.pickupLocationLat,
+      pickupLocationLng: pickup.pickupLocationLng,
+      status: pickup.status,
+      scheduledFor: pickup.scheduledFor.toISOString()
+    })),
+    startLocation
+  );
+
+  res.json({ data: optimized });
 });
 
 app.get('/api/summary', async (_req, res) => {
