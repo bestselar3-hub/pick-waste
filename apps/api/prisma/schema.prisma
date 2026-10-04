@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum WasteType {
+  household
+  recycling
+  organic
+  construction
+  hazardous
+  bulk
+}
+
+enum ServiceType {
+  residential
+  commercial
+}
+
+enum PickupStatus {
+  requested
+  assigned
+  in_progress
+  completed
+  cancelled
+}
+
+model Customer {
+  id          String         @id @default(uuid())
+  name        String
+  email       String         @unique
+  phone       String
+  serviceType ServiceType
+  createdAt   DateTime       @default(now())
+  pickups     PickupRequest[]
+}
+
+model Driver {
+  id               String         @id @default(uuid())
+  name             String
+  vehicleType      String
+  currentLocationLat Float?
+  currentLocationLng Float?
+  active           Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  pickups          PickupRequest[]
+}
+
+model PickupRequest {
+  id               String       @id @default(uuid())
+  customer         Customer     @relation(fields: [customerId], references: [id])
+  customerId       String
+  wasteType        WasteType
+  serviceType      ServiceType
+  status           PickupStatus @default(requested)
+  pickupLocationLat Float
+  pickupLocationLng Float
+  scheduledFor     DateTime
+  notes            String?
+  assignedDriver   Driver?      @relation(fields: [assignedDriverId], references: [id])
+  assignedDriverId String?
+  createdAt        DateTime     @default(now())
+  completedAt      DateTime?
+}

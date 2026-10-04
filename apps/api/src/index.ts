@@ -1,100 +1,16 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { PickupStatus, ServiceType, WasteType, type PickupRequest } from '@pickwaste/shared';
+import { PrismaClient, PickupStatus, ServiceType, WasteType } from '@prisma/client';
 
 dotenv.config();
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
+const prisma = new PrismaClient();
 
 app.use(cors());
 app.use(express.json());
-
-const customers = [
-  {
-    id: 'cust-001',
-    name: 'Ada Johnson',
-    email: 'ada@example.com',
-    phone: '+2348001001001',
-    serviceType: ServiceType.Residential
-  },
-  {
-    id: 'cust-002',
-    name: 'Green Valley Hotel',
-    email: 'admin@greenvalley.com',
-    phone: '+2348002002002',
-    serviceType: ServiceType.Commercial
-  },
-  {
-    id: 'cust-003',
-    name: 'Miller Construction',
-    email: 'ops@millerbuild.com',
-    phone: '+2348003003003',
-    serviceType: ServiceType.Commercial
-  }
-];
-
-const drivers = [
-  {
-    id: 'driver-001',
-    name: 'Samuel Ade',
-    vehicleType: '5-ton waste truck',
-    currentLocation: { lat: 6.5244, lng: 3.3792 },
-    active: true
-  },
-  {
-    id: 'driver-002',
-    name: 'Chris Okafor',
-    vehicleType: 'Mini recycling van',
-    currentLocation: { lat: 6.5107, lng: 3.3499 },
-    active: true
-  },
-  {
-    id: 'driver-003',
-    name: 'Ifeoma Bello',
-    vehicleType: 'Bulk haul truck',
-    currentLocation: { lat: 6.5371, lng: 3.4104 },
-    active: false
-  }
-];
-
-const pickups: PickupRequest[] = [
-  {
-    id: 'pickup-1001',
-    customerId: 'cust-001',
-    customerName: 'Ada Johnson',
-    wasteType: WasteType.Household,
-    serviceType: ServiceType.Residential,
-    status: PickupStatus.Assigned,
-    pickupLocation: { lat: 6.5244, lng: 3.3792 },
-    scheduledFor: '2026-10-05T09:00:00.000Z',
-    notes: 'Large household waste bin',
-    assignedDriverId: 'driver-001'
-  },
-  {
-    id: 'pickup-1002',
-    customerId: 'cust-002',
-    customerName: 'Green Valley Hotel',
-    wasteType: WasteType.Recycling,
-    serviceType: ServiceType.Commercial,
-    status: PickupStatus.Requested,
-    pickupLocation: { lat: 6.5107, lng: 3.3499 },
-    scheduledFor: '2026-10-05T11:30:00.000Z'
-  },
-  {
-    id: 'pickup-1003',
-    customerId: 'cust-003',
-    customerName: 'Miller Construction',
-    wasteType: WasteType.Construction,
-    serviceType: ServiceType.Commercial,
-    status: PickupStatus.Completed,
-    pickupLocation: { lat: 6.532, lng: 3.362 },
-    scheduledFor: '2026-10-04T08:15:00.000Z',
-    assignedDriverId: 'driver-002',
-    completedAt: '2026-10-04T09:02:00.000Z'
-  }
-];
 
 const getDistance = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
   const dx = a.lat - b.lat;
@@ -102,127 +18,234 @@ const getDistance = (a: { lat: number; lng: number }, b: { lat: number; lng: num
   return Math.sqrt(dx * dx + dy * dy);
 };
 
-const assignDriver = (pickup: PickupRequest) => {
-  const activeDrivers = drivers.filter((driver) => driver.active);
+const serializePickup = (pickup: any) => ({
+  id: pickup.id,
+  customerId: pickup.customerId,
+  customerName: pickup.customer?.name ?? 'Unknown customer',
+  wasteType: pickup.wasteType,
+  serviceType: pickup.serviceType,
+  status: pickup.status,
+  pickupLocation: {
+    lat: pickup.pickupLocationLat,
+    lng: pickup.pickupLocationLng
+  },
+  scheduledFor: pickup.scheduledFor,
+  notes: pickup.notes,
+  assignedDriverId: pickup.assignedDriverId,
+  completedAt: pickup.completedAt
+});
 
-  if (!activeDrivers.length) {
-    return undefined;
-  }
+const assignDriver = async (pickup: { serviceType: ServiceType; pickupLocationLat: number; pickupLocationLng: number }) => {
+  const drivers = await prisma.driver.findMany({
+    where: { active: true }
+  });
 
-  const candidates = activeDrivers.filter((driver) => {
-    if (pickup.serviceType === ServiceType.Residential) {
+  if (!drivers.length) return null;
+
+  const candidates = drivers.filter((driver) => {
+    if (driver.currentLocationLat == null || driver.currentLocationLng == null) return true;
+
+    if (pickup.serviceType === ServiceType.residential) {
       return driver.vehicleType.toLowerCase().includes('truck') || driver.vehicleType.toLowerCase().includes('van');
     }
 
     return true;
   });
 
-  const bestDriver = candidates.sort(
-    (a, b) => getDistance(a.currentLocation, pickup.pickupLocation) - getDistance(b.currentLocation, pickup.pickupLocation)
-  )[0];
+  const best = candidates.sort((a, b) => {
+    const aDistance = a.currentLocationLat == null || a.currentLocationLng == null
+      ? Number.MAX_SAFE_INTEGER
+      : getDistance({ lat: a.currentLocationLat, lng: a.currentLocationLng }, { lat: pickup.pickupLocationLat, lng: pickup.pickupLocationLng });
 
-  return bestDriver?.id;
+    const bDistance = b.currentLocationLat == null || b.currentLocationLng == null
+      ? Number.MAX_SAFE_INTEGER
+      : getDistance({ lat: b.currentLocationLat, lng: b.currentLocationLng }, { lat: pickup.pickupLocationLat, lng: pickup.pickupLocationLng });
+
+    return aDistance - bDistance;
+  })[0];
+
+  return best?.id ?? null;
+};
+
+const seedDatabase = async () => {
+  const customerCount = await prisma.customer.count();
+  if (customerCount > 0) return;
+
+  const customers = [
+    { name: 'Ada Johnson', email: 'ada@example.com', phone: '+2348001001001', serviceType: ServiceType.residential },
+    { name: 'Green Valley Hotel', email: 'admin@greenvalley.com', phone: '+2348002002002', serviceType: ServiceType.commercial },
+    { name: 'Miller Construction', email: 'ops@millerbuild.com', phone: '+2348003003003', serviceType: ServiceType.commercial }
+  ];
+
+  await prisma.customer.createMany({ data: customers });
+
+  const drivers = [
+    {
+      name: 'Samuel Ade',
+      vehicleType: '5-ton waste truck',
+      currentLocationLat: 6.5244,
+      currentLocationLng: 3.3792,
+      active: true
+    },
+    {
+      name: 'Chris Okafor',
+      vehicleType: 'Mini recycling van',
+      currentLocationLat: 6.5107,
+      currentLocationLng: 3.3499,
+      active: true
+    },
+    {
+      name: 'Ifeoma Bello',
+      vehicleType: 'Bulk haul truck',
+      currentLocationLat: 6.5371,
+      currentLocationLng: 3.4104,
+      active: false
+    }
+  ];
+
+  await prisma.driver.createMany({ data: drivers });
+
+  const customerRecords = await prisma.customer.findMany();
+  const driverRecords = await prisma.driver.findMany();
+
+  await prisma.pickupRequest.createMany({
+    data: [
+      {
+        customerId: customerRecords[0].id,
+        wasteType: WasteType.household,
+        serviceType: ServiceType.residential,
+        status: PickupStatus.assigned,
+        pickupLocationLat: 6.5244,
+        pickupLocationLng: 3.3792,
+        scheduledFor: new Date('2026-10-05T09:00:00.000Z'),
+        notes: 'Large household waste bin',
+        assignedDriverId: driverRecords[0].id
+      },
+      {
+        customerId: customerRecords[1].id,
+        wasteType: WasteType.recycling,
+        serviceType: ServiceType.commercial,
+        status: PickupStatus.requested,
+        pickupLocationLat: 6.5107,
+        pickupLocationLng: 3.3499,
+        scheduledFor: new Date('2026-10-05T11:30:00.000Z')
+      },
+      {
+        customerId: customerRecords[2].id,
+        wasteType: WasteType.construction,
+        serviceType: ServiceType.commercial,
+        status: PickupStatus.completed,
+        pickupLocationLat: 6.532,
+        pickupLocationLng: 3.362,
+        scheduledFor: new Date('2026-10-04T08:15:00.000Z'),
+        assignedDriverId: driverRecords[1].id,
+        completedAt: new Date('2026-10-04T09:02:00.000Z')
+      }
+    ]
+  });
 };
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'pickwaste-api' });
 });
 
-app.get('/api/customers', (_req, res) => {
+app.get('/api/customers', async (_req, res) => {
+  const customers = await prisma.customer.findMany();
   res.json({ data: customers });
 });
 
-app.get('/api/drivers', (_req, res) => {
+app.get('/api/drivers', async (_req, res) => {
+  const drivers = await prisma.driver.findMany();
   res.json({ data: drivers });
 });
 
-app.get('/api/pickups', (_req, res) => {
-  res.json({ data: pickups });
+app.get('/api/pickups', async (_req, res) => {
+  const pickups = await prisma.pickupRequest.findMany({
+    include: { customer: true, assignedDriver: true }
+  });
+
+  res.json({ data: pickups.map(serializePickup) });
 });
 
-app.get('/api/pickups/:id', (req, res) => {
-  const pickup = pickups.find((item) => item.id === req.params.id);
+app.get('/api/pickups/:id', async (req, res) => {
+  const pickup = await prisma.pickupRequest.findUnique({
+    where: { id: req.params.id },
+    include: { customer: true, assignedDriver: true }
+  });
 
   if (!pickup) {
     return res.status(404).json({ error: 'Pickup not found' });
   }
 
-  return res.json({ data: pickup });
+  return res.json({ data: serializePickup(pickup) });
 });
 
-app.get('/api/summary', (_req, res) => {
-  const activePickups = pickups.filter((pickup) => pickup.status !== PickupStatus.Completed && pickup.status !== PickupStatus.Cancelled);
-
-  res.json({
-    data: {
-      totalPickups: pickups.length,
-      activePickups: activePickups.length,
-      activeDrivers: drivers.filter((driver) => driver.active).length,
-      completedToday: pickups.filter((pickup) => pickup.status === PickupStatus.Completed).length,
-      averageRouteMinutes: 41,
-      nextPickup: pickups[0]?.scheduledFor ?? null
-    }
-  });
-});
-
-app.post('/api/pickups', (req, res) => {
-  const payload = req.body as Partial<PickupRequest> & { customerName?: string };
+app.post('/api/pickups', async (req, res) => {
+  const payload = req.body as any;
 
   if (!payload.customerId || !payload.wasteType || !payload.pickupLocation || !payload.scheduledFor) {
     return res.status(400).json({ error: 'customerId, wasteType, pickupLocation, and scheduledFor are required' });
   }
 
-  const matchingCustomer = customers.find((customer) => customer.id === payload.customerId);
+  const customer = await prisma.customer.findUnique({ where: { id: payload.customerId } });
 
-  const newPickup: PickupRequest = {
-    id: `pickup-${Date.now()}`,
-    customerId: payload.customerId,
-    customerName: payload.customerName ?? matchingCustomer?.name ?? 'New customer',
-    wasteType: payload.wasteType as WasteType,
-    serviceType: (payload.serviceType as ServiceType) ?? ServiceType.Residential,
-    status: PickupStatus.Requested,
-    pickupLocation: {
-      lat: Number(payload.pickupLocation.lat),
-      lng: Number(payload.pickupLocation.lng)
-    },
-    scheduledFor: payload.scheduledFor,
-    notes: payload.notes,
-    assignedDriverId: undefined
-  };
-
-  const driverId = assignDriver(newPickup);
-  if (driverId) {
-    newPickup.assignedDriverId = driverId;
-    newPickup.status = PickupStatus.Assigned;
+  if (!customer) {
+    return res.status(404).json({ error: 'Customer not found' });
   }
 
-  pickups.unshift(newPickup);
-  return res.status(201).json({ data: newPickup });
+  const pickupPayload = {
+    customerId: customer.id,
+    wasteType: payload.wasteType,
+    serviceType: payload.serviceType ?? ServiceType.residential,
+    pickupLocationLat: Number(payload.pickupLocation.lat),
+    pickupLocationLng: Number(payload.pickupLocation.lng),
+    scheduledFor: new Date(payload.scheduledFor),
+    notes: payload.notes ?? '',
+    status: PickupStatus.requested
+  };
+
+  const assignedDriverId = await assignDriver(pickupPayload);
+
+  const newPickup = await prisma.pickupRequest.create({
+    data: {
+      ...pickupPayload,
+      status: assignedDriverId ? PickupStatus.assigned : PickupStatus.requested,
+      assignedDriverId: assignedDriverId ?? undefined
+    },
+    include: { customer: true, assignedDriver: true }
+  });
+
+  return res.status(201).json({ data: serializePickup(newPickup) });
 });
 
-app.patch('/api/pickups/:id/status', (req, res) => {
-  const pickup = pickups.find((item) => item.id === req.params.id);
+app.patch('/api/pickups/:id/status', async (req, res) => {
+  const pickup = await prisma.pickupRequest.findUnique({ where: { id: req.params.id } });
 
   if (!pickup) {
     return res.status(404).json({ error: 'Pickup not found' });
   }
 
-  const nextStatus = String(req.body.status || pickup.status) as PickupStatus;
-  pickup.status = nextStatus;
+  const nextStatus = String(req.body.status ?? pickup.status) as PickupStatus;
 
-  if (nextStatus === PickupStatus.Completed) {
-    pickup.completedAt = new Date().toISOString();
-  }
+  const updated = await prisma.pickupRequest.update({
+    where: { id: pickup.id },
+    data: {
+      status: nextStatus,
+      completedAt: nextStatus === PickupStatus.completed ? new Date() : pickup.completedAt,
+      assignedDriverId: pickup.assignedDriverId ?? (await assignDriver({
+        serviceType: pickup.serviceType,
+        pickupLocationLat: pickup.pickupLocationLat,
+        pickupLocationLng: pickup.pickupLocationLng
+      })) ?? pickup.assignedDriverId
+    },
+    include: { customer: true, assignedDriver: true }
+  });
 
-  if (nextStatus === PickupStatus.InProgress) {
-    pickup.assignedDriverId = pickup.assignedDriverId ?? assignDriver(pickup);
-  }
-
-  return res.json({ data: pickup });
+  return res.json({ data: serializePickup(updated) });
 });
 
-app.post('/api/pickups/:id/assign', (req, res) => {
-  const pickup = pickups.find((item) => item.id === req.params.id);
+app.post('/api/pickups/:id/assign', async (req, res) => {
+  const pickup = await prisma.pickupRequest.findUnique({ where: { id: req.params.id } });
   const driverId = req.body.driverId as string | undefined;
 
   if (!pickup) {
@@ -233,19 +256,31 @@ app.post('/api/pickups/:id/assign', (req, res) => {
     return res.status(400).json({ error: 'driverId is required' });
   }
 
-  pickup.assignedDriverId = driverId;
-  pickup.status = PickupStatus.Assigned;
+  const updated = await prisma.pickupRequest.update({
+    where: { id: pickup.id },
+    data: {
+      assignedDriverId: driverId,
+      status: PickupStatus.assigned
+    },
+    include: { customer: true, assignedDriver: true }
+  });
 
-  return res.json({ data: pickup });
+  return res.json({ data: serializePickup(updated) });
 });
 
-app.get('/api/routes', (_req, res) => {
+app.get('/api/routes', async (_req, res) => {
+  const pickups = await prisma.pickupRequest.findMany({
+    where: { status: { notIn: [PickupStatus.completed, PickupStatus.cancelled] } },
+    include: { customer: true, assignedDriver: true },
+    orderBy: { scheduledFor: 'asc' }
+  });
+
   res.json({
     data: [
       {
         routeId: 'route-01',
-        driverId: 'driver-001',
-        stops: pickups.slice(0, 2).map((pickup, index) => ({
+        driverId: pickups[0]?.assignedDriverId ?? null,
+        stops: pickups.slice(0, 5).map((pickup, index) => ({
           pickupId: pickup.id,
           sequence: index + 1,
           status: pickup.status
@@ -255,6 +290,41 @@ app.get('/api/routes', (_req, res) => {
   });
 });
 
-app.listen(port, () => {
-  console.log(`PickWaste API is running on http://localhost:${port}`);
+app.get('/api/summary', async (_req, res) => {
+  const [totalPickups, activePickups, activeDrivers, completedToday] = await Promise.all([
+    prisma.pickupRequest.count(),
+    prisma.pickupRequest.count({
+      where: { status: { notIn: [PickupStatus.completed, PickupStatus.cancelled] } }
+    }),
+    prisma.driver.count({ where: { active: true } }),
+    prisma.pickupRequest.count({ where: { status: PickupStatus.completed } })
+  ]);
+
+  const nextPickup = await prisma.pickupRequest.findFirst({
+    where: { status: { not: PickupStatus.completed } },
+    orderBy: { scheduledFor: 'asc' }
+  });
+
+  res.json({
+    data: {
+      totalPickups,
+      activePickups,
+      activeDrivers,
+      completedToday,
+      averageRouteMinutes: 41,
+      nextPickup: nextPickup?.scheduledFor ?? null
+    }
+  });
+});
+
+const startServer = async () => {
+  await seedDatabase();
+  app.listen(port, () => {
+    console.log(`PickWaste API is running on http://localhost:${port}`);
+  });
+};
+
+startServer().catch((error) => {
+  console.error('Failed to start PickWaste API:', error);
+  process.exit(1);
 });
