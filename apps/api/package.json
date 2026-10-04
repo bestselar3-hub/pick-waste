@@ -12,14 +12,18 @@
   "dependencies": {
     "@pickwaste/shared": "*",
     "@prisma/client": "^5.22.0",
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
     "prisma": "^5.22.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.1",
     "@types/cors": "^2.8.5",
     "@types/express": "^5.0.0",
+    "@types/jsonwebtoken": "^9.0.5",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2"

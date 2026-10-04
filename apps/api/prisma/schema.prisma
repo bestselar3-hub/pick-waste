@@ -29,6 +29,12 @@ enum PickupStatus {
   cancelled
 }
 
+enum Role {
+  admin
+  customer
+  driver
+}
+
 model Customer {
   id          String         @id @default(uuid())
   name        String
@@ -48,6 +54,15 @@ model Driver {
   active           Boolean        @default(true)
   createdAt        DateTime       @default(now())
   pickups          PickupRequest[]
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(customer)
+  createdAt    DateTime @default(now())
 }
 
 model PickupRequest {

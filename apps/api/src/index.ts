@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { PrismaClient, PickupStatus, ServiceType, WasteType } from '@prisma/client';
+import { comparePassword, hashPassword, requireAuth, requireRole, signToken, type AuthenticatedRequest } from './auth';
 
 dotenv.config();
 
@@ -143,7 +144,114 @@ const seedDatabase = async () => {
       }
     ]
   });
+
+  const adminUserExists = await prisma.user.findUnique({ where: { email: 'admin@pickwaste.app' } });
+  if (!adminUserExists) {
+    const passwordHash = await hashPassword('admin123');
+    await prisma.user.create({
+      data: {
+        name: 'System Admin',
+        email: 'admin@pickwaste.app',
+        passwordHash,
+        role: 'admin'
+      }
+    });
+  }
 };
+
+app.post('/api/auth/register', async (req, res) => {
+  const payload = req.body as { name?: string; email?: string; password?: string; role?: 'admin' | 'customer' | 'driver' };
+
+  if (!payload.name || !payload.email || !payload.password) {
+    return res.status(400).json({ error: 'name, email, and password are required' });
+  }
+
+  const existing = await prisma.user.findUnique({ where: { email: payload.email } });
+  if (existing) {
+    return res.status(409).json({ error: 'User already exists' });
+  }
+
+  const user = await prisma.user.create({
+    data: {
+      name: payload.name,
+      email: payload.email,
+      passwordHash: await hashPassword(payload.password),
+      role: payload.role ?? 'customer'
+    }
+  });
+
+  const token = signToken({ id: user.id, email: user.email, role: user.role });
+
+  return res.status(201).json({
+    data: {
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    }
+  });
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const payload = req.body as { email?: string; password?: string };
+
+  if (!payload.email || !payload.password) {
+    return res.status(400).json({ error: 'email and password are required' });
+  }
+
+  const user = await prisma.user.findUnique({ where: { email: payload.email } });
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  const valid = await comparePassword(payload.password, user.passwordHash);
+  if (!valid) {
+    return res.status(401).json({ error: 'Invalid credentials' });
+  }
+
+  const token = signToken({ id: user.id, email: user.email, role: user.role });
+
+  return res.json({
+    data: {
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    }
+  });
+});
+
+app.get('/api/auth/me', requireAuth, async (req: AuthenticatedRequest, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  return res.json({
+    data: {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role
+    }
+  });
+});
+
+app.get('/api/admin/panel', requireAuth, requireRole('admin'), async (_req, res) => {
+  const summary = await prisma.pickupRequest.groupBy({
+    by: ['status'],
+    _count: { status: true }
+  });
+
+  res.json({ data: summary });
+});
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', service: 'pickwaste-api' });
